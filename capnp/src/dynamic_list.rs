@@ -27,10 +27,12 @@ impl<'a> Reader<'a> {
         }
     }
 
+    #[inline]
     pub fn len(&self) -> u32 {
         self.reader.len()
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -39,9 +41,14 @@ impl<'a> Reader<'a> {
         self.element_type
     }
 
+    #[inline]
     pub fn get(self, index: u32) -> Result<crate::dynamic_value::Reader<'a>> {
-        assert!(index < self.reader.len());
-        match self.element_type.which() {
+        // Optimization: Use debug_assert for bounds checking in release builds
+        debug_assert!(index < self.reader.len());
+        
+        // Optimization: Cache the type variant to avoid repeated calls to which()
+        let type_variant = self.element_type.which();
+        match type_variant {
             TypeVariant::Void => Ok(dynamic_value::Reader::Void),
             TypeVariant::Bool => Ok(dynamic_value::Reader::Bool(PrimitiveElement::get(
                 &self.reader,

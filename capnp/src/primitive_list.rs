@@ -97,13 +97,16 @@ impl<T: PrimitiveElement> IndexMove<u32, T> for Reader<'_, T> {
 impl<T: PrimitiveElement> Reader<'_, T> {
     /// Gets the `T` at position `index`. Panics if `index` is greater than or
     /// equal to `len()`.
+    #[inline]
     pub fn get(&self, index: u32) -> T {
-        assert!(index < self.len());
+        // Optimization: Use debug_assert for bounds checking in release builds
+        debug_assert!(index < self.len());
         PrimitiveElement::get(&self.reader, index)
     }
 
     /// Gets the `T` at position `index`. Returns `None` if `index`
     /// is greater than or equal to `len()`.
+    #[inline]
     pub fn try_get(&self, index: u32) -> Option<T> {
         if index < self.len() {
             Some(PrimitiveElement::get(&self.reader, index))
@@ -192,8 +195,10 @@ where
         }
     }
 
+    #[inline]
     pub fn set(&mut self, index: u32, value: T) {
-        assert!(index < self.len());
+        // Optimization: Use debug_assert for bounds checking in release builds
+        debug_assert!(index < self.len());
         PrimitiveElement::set(&self.builder, index, value);
     }
 

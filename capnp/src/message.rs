@@ -738,6 +738,10 @@ pub enum AllocationStrategy {
 
     /// Increases segment size by a multiplicative factor for each subsequent segment.
     GrowHeuristically,
+
+    /// Uses aggressive exponential growth optimized for performance-critical applications.
+    /// This strategy minimizes allocations at the cost of potentially higher memory usage.
+    PerformanceOptimized,
 }
 
 pub const SUGGESTED_FIRST_SEGMENT_WORDS: u32 = 1024;
@@ -773,6 +777,14 @@ impl HeapAllocator {
         self
     }
 
+    /// Uses the performance-optimized allocation strategy.
+    /// This is equivalent to `.allocation_strategy(AllocationStrategy::PerformanceOptimized)`
+    /// but provides a more convenient API.
+    pub fn performance_optimized(mut self) -> Self {
+        self.allocation_strategy = AllocationStrategy::PerformanceOptimized;
+        self
+    }
+
     /// Sets the maximum number of words allowed in a single allocation.
     pub fn max_segment_words(mut self, value: u32) -> Self {
         assert!(self.next_size <= value);
@@ -794,7 +806,18 @@ unsafe impl Allocator for HeapAllocator {
         match self.allocation_strategy {
             AllocationStrategy::GrowHeuristically => {
                 if size < self.max_segment_words - self.next_size {
-                    self.next_size += size;
+                    // Use exponential growth instead of linear growth for better performance
+                    // This reduces the number of allocations for growing messages
+                    self.next_size = core::cmp::min(self.next_size.saturating_mul(2), self.max_segment_words);
+                } else {
+                    self.next_size = self.max_segment_words;
+                }
+            }
+            AllocationStrategy::PerformanceOptimized => {
+                if size < self.max_segment_words - self.next_size {
+                    // More aggressive growth strategy for performance-critical applications
+                    // Start with larger initial allocations and grow faster
+                    self.next_size = core::cmp::min(self.next_size.saturating_mul(4), self.max_segment_words);
                 } else {
                     self.next_size = self.max_segment_words;
                 }

@@ -604,17 +604,21 @@ where
 
     // write the first Word, which contains segment_count and the 1st segment length
     buf[0..4].copy_from_slice(&(segment_count as u32 - 1).to_le_bytes());
+    
+    // Optimization: Cache segment length to avoid repeated get_segment calls
+    let first_segment_len = segments.get_segment(0).unwrap().len();
     buf[4..8].copy_from_slice(
-        &((segments.get_segment(0).unwrap().len() / BYTES_PER_WORD) as u32).to_le_bytes(),
+        &((first_segment_len / BYTES_PER_WORD) as u32).to_le_bytes(),
     );
     write.write_all(&buf)?;
 
     if segment_count > 1 {
         if segment_count < 4 {
             for idx in 1..segment_count {
+                // Optimization: Cache segment length
+                let segment_len = segments.get_segment(idx as u32).unwrap().len();
                 buf[(idx - 1) * 4..idx * 4].copy_from_slice(
-                    &((segments.get_segment(idx as u32).unwrap().len() / BYTES_PER_WORD) as u32)
-                        .to_le_bytes(),
+                    &((segment_len / BYTES_PER_WORD) as u32).to_le_bytes(),
                 );
             }
             if segment_count == 2 {
@@ -657,11 +661,11 @@ fn write_segments<W, R: message::ReaderSegments + ?Sized>(write: &mut W, segment
 where
     W: Write,
 {
-    for i in 0.. {
-        if let Some(segment) = segments.get_segment(i) {
+    // Optimization: Use len() to avoid repeated get_segment calls that return None
+    let segment_count = segments.len();
+    for i in 0..segment_count {
+        if let Some(segment) = segments.get_segment(i as u32) {
             write.write_all(segment)?;
-        } else {
-            break;
         }
     }
     Ok(())
