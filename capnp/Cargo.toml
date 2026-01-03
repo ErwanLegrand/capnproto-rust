@@ -27,6 +27,7 @@ quickcheck = "1"
 alloc = ["embedded-io?/alloc"]
 default = ["std", "alloc"]
 memory-pooling = ["dep:thiserror"]
+simd = []
 
 rpc_try = []
 

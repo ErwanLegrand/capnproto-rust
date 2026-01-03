@@ -599,8 +599,35 @@ where
     W: Write,
     R: message::ReaderSegments + ?Sized,
 {
-    let mut buf: [u8; 8] = [0; 8];
     let segment_count = segments.len();
+    
+    // Try SIMD-optimized path first
+    #[cfg(feature = "simd")]
+    {
+        use crate::simd::write_segment_table_simd;
+        
+        // Prepare segment counts and sizes for SIMD processing
+        let segment_counts = [segment_count as u32];
+        let mut segment_sizes = Vec::with_capacity(segment_count);
+        
+        for i in 0..segment_count {
+            if let Some(segment) = segments.get_segment(i as u32) {
+                segment_sizes.push((segment.len() / BYTES_PER_WORD) as u32);
+            }
+        }
+        
+        // Use SIMD-optimized writing
+        let mut buf = vec![0u8; (segment_count + 1) * 4];
+        let written = write_segment_table_simd(&mut buf, &segment_counts, &segment_sizes);
+        
+        if written > 0 {
+            write.write_all(&buf[..written])?;
+            return Ok(());
+        }
+    }
+    
+    // Fallback to original implementation
+    let mut buf: [u8; 8] = [0; 8];
 
     // write the first Word, which contains segment_count and the 1st segment length
     buf[0..4].copy_from_slice(&(segment_count as u32 - 1).to_le_bytes());
@@ -663,6 +690,32 @@ where
 {
     // Optimization: Use len() to avoid repeated get_segment calls that return None
     let segment_count = segments.len();
+    
+    #[cfg(feature = "simd")]
+    {
+        use crate::simd::write_segments_simd;
+        
+        // Collect segments for SIMD processing
+        let mut segment_data = Vec::with_capacity(segment_count);
+        for i in 0..segment_count {
+            if let Some(segment) = segments.get_segment(i as u32) {
+                segment_data.push(segment);
+            }
+        }
+        
+        // Use SIMD-optimized writing when we have multiple segments
+        if segment_data.len() > 1 {
+            let mut buf = vec![0u8; segment_data.iter().map(|s| s.len()).sum()];
+            let written = write_segments_simd(&mut buf, &segment_data);
+            
+            if written > 0 {
+                write.write_all(&buf[..written])?;
+                return Ok(());
+            }
+        }
+    }
+    
+    // Fallback to original implementation
     for i in 0..segment_count {
         if let Some(segment) = segments.get_segment(i as u32) {
             write.write_all(segment)?;
