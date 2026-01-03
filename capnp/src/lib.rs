@@ -51,6 +51,7 @@ pub mod enum_list;
 pub mod introspect;
 pub mod io;
 pub mod list_list;
+pub mod memory;
 pub mod message;
 pub mod primitive_list;
 pub mod private;
