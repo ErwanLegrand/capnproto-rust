@@ -253,6 +253,115 @@ pub fn write_segments_simd(output: &mut [u8], segments: &[&[u8]]) -> usize {
     pos
 }
 
+/// Read u32 values from little-endian bytes using SIMD
+#[inline]
+pub fn read_u32_le_simd(input: &[u8], output: &mut [u32]) {
+    #[cfg(target_feature = "avx2")]
+    if is_x86_feature_detected!("avx2") {
+        return unsafe { read_u32_le_avx2(input, output) };
+    }
+    
+    #[cfg(target_feature = "sse2")]
+    if is_x86_feature_detected!("sse2") {
+        return unsafe { read_u32_le_sse2(input, output) };
+    }
+    
+    #[cfg(target_arch = "aarch64")]
+    if cfg!(target_feature = "neon") {
+        return unsafe { read_u32_le_neon(input, output) };
+    }
+    
+    // Fallback to scalar implementation
+    read_u32_le_scalar(input, output);
+}
+
+/// Scalar fallback implementation for reading u32 from LE bytes
+#[inline]
+fn read_u32_le_scalar(input: &[u8], output: &mut [u32]) {
+    let len = output.len().min(input.len() / 4);
+    for i in 0..len {
+        let offset = i * 4;
+        let bytes = [input[offset], input[offset + 1], input[offset + 2], input[offset + 3]];
+        output[i] = u32::from_le_bytes(bytes);
+    }
+}
+
+/// AVX2 implementation for reading u32 from LE bytes
+#[cfg(target_feature = "avx2")]
+#[target_feature(enable = "avx2")]
+unsafe fn read_u32_le_avx2(input: &[u8], output: &mut [u32]) {
+    use std::arch::x86_64::*;
+    
+    let len = output.len().min(input.len() / 4);
+    let mut i = 0;
+    
+    // Process 8 values at a time using AVX2
+    while i + 8 <= len {
+        let chunk = _mm256_loadu_si256(input.as_ptr().add(i * 4) as *const __m256i);
+        _mm256_storeu_si256(output.as_mut_ptr().add(i) as *mut __m256i, chunk);
+        i += 8;
+    }
+    
+    // Process remaining values with scalar
+    while i < len {
+        let offset = i * 4;
+        let bytes = [input[offset], input[offset + 1], input[offset + 2], input[offset + 3]];
+        output[i] = u32::from_le_bytes(bytes);
+        i += 1;
+    }
+}
+
+/// SSE2 implementation for reading u32 from LE bytes
+#[cfg(target_feature = "sse2")]
+#[target_feature(enable = "sse2")]
+unsafe fn read_u32_le_sse2(input: &[u8], output: &mut [u32]) {
+    use std::arch::x86_64::*;
+    
+    let len = output.len().min(input.len() / 4);
+    let mut i = 0;
+    
+    // Process 4 values at a time using SSE2
+    while i + 4 <= len {
+        let chunk = _mm_loadu_si128(input.as_ptr().add(i * 4) as *const __m128i);
+        _mm_storeu_si128(output.as_mut_ptr().add(i) as *mut __m128i, chunk);
+        i += 4;
+    }
+    
+    // Process remaining values with scalar
+    while i < len {
+        let offset = i * 4;
+        let bytes = [input[offset], input[offset + 1], input[offset + 2], input[offset + 3]];
+        output[i] = u32::from_le_bytes(bytes);
+        i += 1;
+    }
+}
+
+/// NEON implementation for reading u32 from LE bytes
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn read_u32_le_neon(input: &[u8], output: &mut [u32]) {
+    use std::arch::aarch64::*;
+    
+    let len = output.len().min(input.len() / 4);
+    let mut i = 0;
+    
+    // Process 4 values at a time using NEON
+    while i + 4 <= len {
+        let chunk = vld1q_u8(input.as_ptr().add(i * 4));
+        let int_chunk = vreinterpretq_u32_u8(chunk);
+        vst1q_u32(output.as_mut_ptr().add(i), int_chunk);
+        i += 4;
+    }
+    
+    // Process remaining values with scalar
+    while i < len {
+        let offset = i * 4;
+        let bytes = [input[offset], input[offset + 1], input[offset + 2], input[offset + 3]];
+        output[i] = u32::from_le_bytes(bytes);
+        i += 1;
+    }
+}
+
 /// Checksum calculation using SIMD
 pub fn calculate_checksum_simd(data: &[u8]) -> u32 {
     let mut checksum = 0u32;

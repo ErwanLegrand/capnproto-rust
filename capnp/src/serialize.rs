@@ -57,6 +57,13 @@ pub fn read_message_from_flat_slice<'a>(
     let all_bytes = *slice;
     let mut bytes = *slice;
     let orig_bytes_len = bytes.len();
+    
+    #[cfg(feature = "simd")]
+    let Some(segment_lengths_builder) = read_segment_table_simd(&mut bytes, options)? else {
+        return Err(Error::from_kind(ErrorKind::EmptySlice));
+    };
+    
+    #[cfg(not(feature = "simd"))]
     let Some(segment_lengths_builder) = read_segment_table(&mut bytes, options)? else {
         return Err(Error::from_kind(ErrorKind::EmptySlice));
     };
@@ -482,6 +489,80 @@ where
                 let segment_len =
                     u32::from_le_bytes(segment_sizes[(idx * 4)..(idx + 1) * 4].try_into().unwrap())
                         as usize;
+                segment_lengths_builder.try_push_segment(segment_len)?;
+            }
+        }
+    }
+
+    // Don't accept a message which the receiver couldn't possibly traverse without hitting the
+    // traversal limit. Without this check, a malicious client could transmit a very large segment
+    // size to make the receiver allocate excessive space and possibly crash.
+    if let Some(limit) = options.traversal_limit_in_words {
+        if segment_lengths_builder.total_words() > limit {
+            return Err(Error::from_kind(ErrorKind::MessageTooLarge(
+                segment_lengths_builder.total_words(),
+            )));
+        }
+    }
+
+    Ok(Some(segment_lengths_builder))
+}
+
+#[cfg(feature = "simd")]
+fn read_segment_table_simd<R>(
+    read: &mut R,
+    options: message::ReaderOptions,
+) -> Result<Option<SegmentLengthsBuilder>>
+where
+    R: Read,
+{
+    // read the first Word, which contains segment_count and the 1st segment length
+    let mut buf: [u8; 8] = [0; 8];
+    {
+        let n = read.read(&mut buf[..])?;
+        if n == 0 {
+            // Clean EOF on message boundary
+            return Ok(None);
+        } else if n < 8 {
+            read.read_exact(&mut buf[n..])?;
+        }
+    }
+
+    let segment_count = u32::from_le_bytes(buf[0..4].try_into().unwrap()).wrapping_add(1) as usize;
+
+    if segment_count >= SEGMENTS_COUNT_LIMIT || segment_count == 0 {
+        return Err(Error::from_kind(ErrorKind::InvalidNumberOfSegments(
+            segment_count,
+        )));
+    }
+
+    let mut segment_lengths_builder = SegmentLengthsBuilder::with_capacity(segment_count);
+    segment_lengths_builder
+        .try_push_segment(u32::from_le_bytes(buf[4..8].try_into().unwrap()) as usize)?;
+    
+    if segment_count > 1 {
+        if segment_count < 4 {
+            read.read_exact(&mut buf)?;
+            for idx in 0..(segment_count - 1) {
+                let segment_len =
+                    u32::from_le_bytes(buf[(idx * 4)..(idx + 1) * 4].try_into().unwrap()) as usize;
+                segment_lengths_builder.try_push_segment(segment_len)?;
+            }
+        } else {
+            // Use SIMD-optimized reading for larger segment counts
+            let mut segment_sizes = vec![0u8; (segment_count & !1) * 4];
+            read.read_exact(&mut segment_sizes[..])?;
+            
+            // Convert bytes to u32 values using SIMD
+            // We only need segment_count - 1 values, but we read (segment_count & !1) * 4 bytes
+            let values_to_read = segment_count - 1;
+            let mut u32_values = vec![0u32; values_to_read];
+            use crate::simd::read_u32_le_simd;
+            
+            read_u32_le_simd(&segment_sizes[..values_to_read * 4], &mut u32_values);
+            
+            for idx in 0..values_to_read {
+                let segment_len = u32_values[idx] as usize;
                 segment_lengths_builder.try_push_segment(segment_len)?;
             }
         }
