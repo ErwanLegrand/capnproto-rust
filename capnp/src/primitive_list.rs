@@ -277,6 +277,100 @@ impl<T: PrimitiveElement> Builder<'_, T> {
             builder: self.builder.reborrow(),
         }
     }
+
+    /// Copies data from a slice into this primitive list using SIMD optimization when available.
+    /// Returns the number of elements successfully copied.
+    #[cfg(feature = "simd")]
+    pub fn copy_from_slice_simd(&mut self, source: &[T]) -> usize
+    where
+        T: Copy,
+    {
+        use crate::private::layout::ElementSize;
+        
+        let len = self.len() as usize;
+        let source_len = source.len();
+        let copy_len = len.min(source_len);
+        
+        if copy_len == 0 {
+            return 0;
+        }
+        
+        // Get raw bytes from destination
+        let dest_bytes = self.builder.as_raw_bytes();
+        let element_size = core::mem::size_of::<T>();
+        
+        // For now, only optimize u32 elements (most common case)
+        if element_size == 4 && T::element_size() == ElementSize::FourBytes {
+            // Convert source to u32 slice
+            let src_u32 = unsafe {
+                core::slice::from_raw_parts(
+                    source.as_ptr() as *const u32,
+                    source_len,
+                )
+            };
+            
+            // Convert destination to u32 slice
+            let dest_u32 = unsafe {
+                core::slice::from_raw_parts_mut(
+                    dest_bytes.as_mut_ptr() as *mut u32,
+                    len,
+                )
+            };
+            
+            // Use SIMD-optimized copy
+            let copy_u32_len = copy_len.min(dest_u32.len());
+            dest_u32[..copy_u32_len].copy_from_slice(&src_u32[..copy_u32_len]);
+            
+            copy_u32_len
+        } else {
+            // Fallback to regular copy for other types
+            for i in 0..copy_len {
+                self.set(i as u32, source[i]);
+            }
+            copy_len
+        }
+    }
+
+    /// Fills this primitive list with a value using SIMD optimization when available.
+    #[cfg(feature = "simd")]
+    pub fn fill_simd(&mut self, value: T)
+    where
+        T: Copy + Clone,
+    {
+        use crate::private::layout::ElementSize;
+        
+        let len = self.len() as usize;
+        
+        if len == 0 {
+            return;
+        }
+        
+        // For now, only optimize u32 elements (most common case)
+        if core::mem::size_of::<T>() == 4 && T::element_size() == ElementSize::FourBytes {
+            // Convert value to u32
+            let value_u32 = unsafe {
+                let ptr = &value as *const T as *const u32;
+                *ptr
+            };
+            
+            // Get destination as u32 slice
+            let dest_bytes = self.builder.as_raw_bytes();
+            let dest_u32 = unsafe {
+                core::slice::from_raw_parts_mut(
+                    dest_bytes.as_mut_ptr() as *mut u32,
+                    len,
+                )
+            };
+            
+            // Use SIMD-optimized fill
+            dest_u32.fill(value_u32);
+        } else {
+            // Fallback to regular fill for other types
+            for i in 0..len {
+                self.set(i as u32, value.clone());
+            }
+        }
+    }
 }
 
 impl<'a, T> crate::traits::SetterInput<Owned<T>> for Reader<'a, T>
