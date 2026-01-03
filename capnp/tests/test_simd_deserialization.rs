@@ -126,3 +126,35 @@ fn test_read_u32_le_simd_function() {
     
     println!("SIMD read_u32_le_simd function works correctly");
 }
+
+#[test]
+fn test_data_validation_simd() {
+    // Test our SIMD data validation functions
+    use capnp::simd::{validate_no_null_bytes_simd, validate_range_simd};
+    
+    // Test data without null bytes
+    let valid_data = b"Hello, World! This is a test string without null bytes.";
+    assert!(validate_no_null_bytes_simd(valid_data));
+    
+    // Test data with null bytes
+    let invalid_data = b"Hello\x00World";
+    assert!(!validate_no_null_bytes_simd(invalid_data));
+    
+    // Test empty data
+    let empty_data = b"";
+    assert!(validate_no_null_bytes_simd(empty_data));
+    
+    // Test range validation - valid ASCII range
+    let ascii_data = b"Hello123";
+    assert!(validate_range_simd(ascii_data, 32, 126));
+    
+    // Test range validation - contains out-of-range bytes
+    let mixed_data = b"Hello\x01\xFF";
+    assert!(!validate_range_simd(mixed_data, 32, 126));
+    
+    // Test range validation - all valid
+    let valid_range_data = [65u8; 32]; // All 'A' characters
+    assert!(validate_range_simd(&valid_range_data, 65, 65));
+    
+    println!("SIMD data validation functions work correctly");
+}

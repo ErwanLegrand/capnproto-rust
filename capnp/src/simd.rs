@@ -362,6 +362,85 @@ unsafe fn read_u32_le_neon(input: &[u8], output: &mut [u32]) {
     }
 }
 
+/// Validates that no bytes in the data are zero (null bytes) using SIMD
+#[inline]
+pub fn validate_no_null_bytes_simd(data: &[u8]) -> bool {
+    let len = data.len();
+    let mut i = 0;
+    
+    // Process 16 bytes at a time using SIMD when possible
+    #[cfg(target_feature = "avx2")]
+    if is_x86_feature_detected!("avx2") && len >= 16 {
+        use std::arch::x86_64::*;
+        
+        while i + 16 <= len {
+            let chunk = _mm256_loadu_si256(data.as_ptr().add(i) as *const __m256i);
+            let zero_mask = _mm256_cmpeq_epi8(chunk, _mm256_setzero_si256());
+            let mask = _mm256_movemask_epi8(zero_mask);
+            
+            if mask != 0 {
+                return false; // Found null byte
+            }
+            
+            i += 16;
+        }
+    }
+    
+    // Process remaining bytes
+    while i < len {
+        if data[i] == 0 {
+            return false;
+        }
+        i += 1;
+    }
+    
+    true
+}
+
+/// Validates that all bytes in the data are within a specific range using SIMD
+#[inline]
+pub fn validate_range_simd(data: &[u8], min: u8, max: u8) -> bool {
+    let len = data.len();
+    let mut i = 0;
+    
+    // Process 16 bytes at a time using SIMD when possible
+    #[cfg(target_feature = "avx2")]
+    if is_x86_feature_detected!("avx2") && len >= 16 {
+        use std::arch::x86_64::*;
+        
+        let min_vec = _mm256_set1_epi8(min as i8);
+        let max_vec = _mm256_set1_epi8(max as i8);
+        
+        while i + 16 <= len {
+            let chunk = _mm256_loadu_si256(data.as_ptr().add(i) as *const __m256i);
+            
+            // Check if any byte is less than min
+            let under_mask = _mm256_cmpgt_epi8(min_vec, chunk);
+            // Check if any byte is greater than max
+            let over_mask = _mm256_cmpgt_epi8(chunk, max_vec);
+            
+            let under_result = _mm256_movemask_epi8(under_mask);
+            let over_result = _mm256_movemask_epi8(over_mask);
+            
+            if under_result != 0 || over_result != 0 {
+                return false; // Found out-of-range byte
+            }
+            
+            i += 16;
+        }
+    }
+    
+    // Process remaining bytes
+    while i < len {
+        if data[i] < min || data[i] > max {
+            return false;
+        }
+        i += 1;
+    }
+    
+    true
+}
+
 /// Checksum calculation using SIMD
 pub fn calculate_checksum_simd(data: &[u8]) -> u32 {
     let mut checksum = 0u32;
